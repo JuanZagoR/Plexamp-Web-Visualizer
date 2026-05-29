@@ -1,5 +1,7 @@
 require('dotenv').config();
 const express  = require('express');
+const fs       = require('fs');
+const path     = require('path');
 const xml2js   = require('xml2js');
 const helmet   = require('helmet');
 const rateLimit = require('express-rate-limit');
@@ -42,7 +44,7 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// 4. Middleware de Autenticación
+// 4. Middleware de Autenticación (Aplicado solo a las API)
 function auth(req, res, next) {
   const token = req.query.token || req.headers['x-viewer-token'];
   if (token !== VIEWER_TOKEN) {
@@ -51,13 +53,20 @@ function auth(req, res, next) {
   next();
 }
 
-// Aplicar auth a TODAS las rutas (incluyendo estáticos y proxy)
-app.use(auth);
-
 app.get('/ping', (req, res) => res.json({ ok: true }));
 
-// Proxy for images to hide the Plex Token
-app.get('/proxy/image', async (req, res) => {
+// 5. Inyección Dinámica del Token en el Frontend
+app.get('/', (req, res) => {
+  const indexPath = path.join(__dirname, 'public', 'index.html');
+  fs.readFile(indexPath, 'utf8', (err, html) => {
+    if (err) return res.status(500).send('Error loading frontend');
+    const injectedHtml = html.replace('__INJECTED_TOKEN__', VIEWER_TOKEN);
+    res.send(injectedHtml);
+  });
+});
+
+// Proxy for images to hide the Plex Token (Protegido por auth)
+app.get('/proxy/image', auth, async (req, res) => {
   try {
     const imgPath = req.query.path;
     if (!imgPath) return res.status(400).send('Missing path');
@@ -77,7 +86,7 @@ app.get('/proxy/image', async (req, res) => {
   }
 });
 
-app.get('/status', async (req, res) => {
+app.get('/status', auth, async (req, res) => {
   try {
     const response = await fetch(PLEX_URL);
     const xml      = await response.text();

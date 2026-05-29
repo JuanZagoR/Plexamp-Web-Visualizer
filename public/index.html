@@ -1252,7 +1252,8 @@ function updateUI(data) {
 
 // ── POLL ──────────────────────────────────────────────────
 const urlParams = new URLSearchParams(window.location.search);
-const viewerToken = urlParams.get('token') || '';
+// El servidor reemplazará __INJECTED_TOKEN__ automáticamente al servir la página
+const viewerToken = urlParams.get('token') || '__INJECTED_TOKEN__';
 
 async function poll() {
   try {
