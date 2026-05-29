@@ -26,12 +26,14 @@ app.set('trust proxy', 1);
 // 2. Seguridad en cabeceras HTTP
 app.use(helmet({
   contentSecurityPolicy: {
+    useDefaults: true,
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'", "'unsafe-inline'"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
-      imgSrc: ["'self'", "data:"]
+      imgSrc: ["'self'", "data:"],
+      upgradeInsecureRequests: null,
     }
   }
 }));
