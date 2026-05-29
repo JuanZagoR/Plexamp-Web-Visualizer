@@ -58,11 +58,11 @@ function auth(req, res, next) {
 app.get('/ping', (req, res) => res.json({ ok: true }));
 
 // 5. Inyección Dinámica del Token en el Frontend
-app.get('/', (req, res) => {
+app.get(['/', '/index.html'], (req, res) => {
   const indexPath = path.join(__dirname, 'public', 'index.html');
   fs.readFile(indexPath, 'utf8', (err, html) => {
     if (err) return res.status(500).send('Error loading frontend');
-    const injectedHtml = html.replace('__INJECTED_TOKEN__', VIEWER_TOKEN);
+    const injectedHtml = html.replace(/__INJECTED_TOKEN__/g, VIEWER_TOKEN);
     res.send(injectedHtml);
   });
 });
