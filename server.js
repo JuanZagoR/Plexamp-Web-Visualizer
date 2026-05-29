@@ -1,58 +1,128 @@
-const express = require('express');
-const xml2js = require('xml2js');
-// fetch ist in Node 20 nativ verfügbar, keine extra require nötig!
-const app = express();
-const PORT = 3000;
+require('dotenv').config();
+const express  = require('express');
+const xml2js   = require('xml2js');
+const helmet   = require('helmet');
+const rateLimit = require('express-rate-limit');
 
-// Plex Server + Token
-const PLEX_URL = 'http://<YOUR_PLEX_SERVER_IP>:32400/status/sessions?X-Plex-Token=<YOUR-TOKEN>';
+const app      = express();
+const PORT     = process.env.PORT || 3000;
 
-// Test-Endpoint
-app.get('/ping', (req, res) => {
-  res.json({ msg: 'Server läuft!' });
+const PLEX_BASE  = process.env.PLEX_BASE;
+const PLEX_TOKEN = process.env.PLEX_TOKEN;
+const VIEWER_TOKEN = process.env.VIEWER_TOKEN;
+
+const PLEX_URL   = `${PLEX_BASE}/status/sessions?X-Plex-Token=${PLEX_TOKEN}`;
+
+if (!PLEX_BASE || !PLEX_TOKEN || !VIEWER_TOKEN) {
+  console.error('Faltan variables PLEX_BASE, PLEX_TOKEN o VIEWER_TOKEN en .env');
+  process.exit(1);
+}
+
+// 1. Confiar en proxy para Cloudflare Tunnels
+app.set('trust proxy', 1);
+
+// 2. Seguridad en cabeceras HTTP
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      imgSrc: ["'self'", "data:"]
+    }
+  }
+}));
+
+// 3. Rate Limit (300 req/minuto)
+const limiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 300,
+  message: 'Demasiadas peticiones desde esta IP, inténtalo más tarde.'
+});
+app.use(limiter);
+
+// 4. Middleware de Autenticación
+function auth(req, res, next) {
+  const token = req.query.token || req.headers['x-viewer-token'];
+  if (token !== VIEWER_TOKEN) {
+    return res.status(401).send('Unauthorized');
+  }
+  next();
+}
+
+// Aplicar auth a TODAS las rutas (incluyendo estáticos y proxy)
+app.use(auth);
+
+app.get('/ping', (req, res) => res.json({ ok: true }));
+
+// Proxy for images to hide the Plex Token
+app.get('/proxy/image', async (req, res) => {
+  try {
+    const imgPath = req.query.path;
+    if (!imgPath) return res.status(400).send('Missing path');
+    
+    const url = `${PLEX_BASE}${imgPath}?X-Plex-Token=${PLEX_TOKEN}`;
+    const response = await fetch(url);
+    if (!response.ok) return res.status(response.status).send('Plex image error');
+
+    const contentType = response.headers.get('content-type');
+    if (contentType) res.set('Content-Type', contentType);
+
+    const arrayBuffer = await response.arrayBuffer();
+    res.send(Buffer.from(arrayBuffer));
+  } catch (err) {
+    console.error('Error proxying image:', err.message);
+    res.status(500).send('Proxy error');
+  }
 });
 
-// Plex-Status
 app.get('/status', async (req, res) => {
   try {
     const response = await fetch(PLEX_URL);
-    const xml = await response.text();
+    const xml      = await response.text();
 
-    // XML in JSON umwandeln
     xml2js.parseString(xml, (err, result) => {
-      if (err) {
-        return res.status(500).json({ error: 'XML parse error' });
-      }
+      if (err) return res.status(500).json({ error: 'XML parse error' });
 
       const tracks = result.MediaContainer.Track || [];
-      if (tracks.length > 0) {
-        const track = tracks[0];
-        const player = track.Player?.[0]?.$ || {};
-        const state = player.state || 'stopped';
-        const thumb = track.$.thumb;
+      if (tracks.length === 0) return res.json({ state: 'stopped' });
 
-        let coverUrl = null;
-        if (thumb) {
-          coverUrl = `http://192.168.1.111:32400${thumb}?X-Plex-Token=GMGsBCzK1Pa3u2gvzo2H`;
-        }
+      const track  = tracks[0];
+      const attr   = track.$  || {};
+      const player = (track.Player?.[0]?.$)                    || {};
+      const media  = (track.Media?.[0]?.$)                     || {};
+      const stream = (track.Media?.[0]?.Part?.[0]?.Stream?.[0]?.$) || {};
 
-        res.json({
-          state,
-          cover: coverUrl
-        });
-      } else {
-        res.json({ state: 'stopped' });
-      }
+      const thumb = attr.thumb || attr.parentThumb || '';
+      const currentToken = req.query.token || req.headers['x-viewer-token'];
+      const cover = thumb
+        ? `/proxy/image?path=${encodeURIComponent(thumb)}&token=${encodeURIComponent(currentToken)}`
+        : null;
+
+      res.json({
+        state:      player.state                  || 'stopped',
+        cover,
+        title:      attr.title                    || null,
+        artist:     attr.grandparentTitle         || null,
+        album:      attr.parentTitle              || null,
+        year:       attr.parentYear               || null,
+        duration:   parseInt(attr.duration)       || 0,
+        viewOffset: parseInt(attr.viewOffset)     || 0,
+        codec:      media.audioCodec || stream.codec || null,
+        bitrate:    parseInt(media.bitrate)       || null,
+        bitDepth:   parseInt(stream.bitDepth)     || null,
+        sampleRate: parseInt(stream.samplingRate) || null,
+      });
     });
   } catch (e) {
-    console.error('Fehler beim Abruf von Plex:', e);
+    console.error('Error al consultar Plex:', e.message);
     res.status(500).json({ error: 'Fetch failed' });
   }
 });
 
-// Static files für dein Vinyl-Frontend
 app.use(express.static('public'));
 
 app.listen(PORT, () => {
-  console.log(`✅ Server läuft auf http://localhost:${PORT}`);
+  console.log(`Servidor corriendo en http://localhost:${PORT}`);
 });

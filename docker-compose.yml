@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  plexamp-visualizer:
+    build: .
+    container_name: plexamp_visualizer
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    # Si quieres limitar el uso de recursos, puedes descomentar lo siguiente:
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '0.50'
+    #       memory: 256M

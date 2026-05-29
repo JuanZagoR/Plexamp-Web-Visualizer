@@ -1,72 +1,1306 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <title>Vinyl-Illusion mit Plexamp</title>
-  <style>
-    body {
-      margin: 0;
-      background: black;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
-      flex-direction: column;
-      color: white;
-      font-family: sans-serif;
-    }
-    #vinyl {
-      border-radius: 50%;
-      width: 300px;
-      height: 300px;
-      background: radial-gradient(circle, #222 40%, #555 70%, #111 100%);
-      background-size: cover;
-      background-position: center;
-      animation: spin 1.8s linear infinite; /* 33⅓ rpm */
-      animation-play-state: paused;
-    }
-    @keyframes spin {
-      from { transform: rotate(0deg); }
-      to { transform: rotate(360deg); }
-    }
-    #status {
-      margin-top: 20px;
-      font-size: 18px;
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vinyl Visualizer</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=Bebas+Neue&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0d0d0f;
+  --surface: #161618;
+  --vinyl-dark: #0a0a0c;
+  --text-primary: #e8e4d9;
+  --text-secondary: rgba(255, 255, 255, 0.65);
+  --accent: #c8a96e;
+  --label-r: 0;
+  --label-g: 0;
+  --label-b: 0;
+  /* Arm angles: rest=fully outside track, play-start=outer edge, play-end=inner edge */
+  --arm-angle: -28deg;
+}
+
+html, body {
+  width: 100%; height: 100%;
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: 'DM Mono', monospace;
+  overflow: hidden;
+}
+
+/* Ambient glow from album colors */
+#ambient {
+  position: fixed; inset: 0; z-index: 0;
+  transition: background 3s ease;
+  pointer-events: none;
+}
+
+/* ── LAYOUT ── */
+#stage {
+  position: fixed; inset: 0; z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 64px;
+  /* Desktop: escalar a 150% para llenar mejor la pantalla */
+  transform: scale(1.5);
+  transform-origin: center center;
+}
+#stage.reversed {
+  flex-direction: row-reverse;
+}
+
+/* Tablet */
+@media (max-width: 1280px) {
+  #stage { transform: scale(1.1); }
+}
+
+/* Tablet pequeño — apilar verticalmente */
+@media (max-width: 900px) {
+  #stage {
+    transform: scale(0.9);
+    flex-direction: column;
+    gap: 40px;
+    align-items: center;
+  }
+  #stage.reversed {
+    flex-direction: column-reverse;
+  }
+}
+
+/* Móvil */
+@media (max-width: 560px) {
+  #stage {
+    transform: scale(0.80);
+    flex-direction: column;
+    justify-content: flex-start;
+    padding-top: 26px; /* Ajuste milimétrico, casi al borde límite de superposición */
+    padding-bottom: 10px; /* Reducido al mínimo para el badge de calidad */
+    gap: 48px;
+  }
+  #stage.reversed {
+    flex-direction: column-reverse;
+  }
+}
+
+
+/* ── TURNTABLE SIDE ── */
+#turntable-side {
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* Platter */
+#platter {
+  width: 420px; height: 420px;
+  border-radius: 50%;
+  position: relative;
+  /* Dark vinyl base */
+  background: #0c0c0e;
+  box-shadow:
+    0 0 0 3px #1a1a1e,
+    0 0 0 5px #111,
+    0 10px 70px rgba(0,0,0,0.95),
+    inset 0 1px 0 rgba(255,255,255,0.03);
+  overflow: hidden;
+}
+
+/* Canvas for grooves + label — rendered via JS */
+#vinyl-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%; height: 100%;
+  border-radius: 50%;
+}
+
+/* Sheen */
+#platter::after {
+  content: '';
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  background: linear-gradient(135deg,
+    rgba(255,255,255,0.05) 0%,
+    transparent 45%,
+    rgba(255,255,255,0.015) 100%);
+  pointer-events: none;
+  z-index: 4;
+}
+
+
+
+/* ── TONEARM ── */
+#arm-wrap {
+  position: absolute;
+  top: -14px; right: -60px;
+  width: 200px; height: 260px;
+  z-index: 10;
+  pointer-events: none;
+}
+
+#arm-svg {
+  width: 100%; height: 100%;
+  overflow: visible;
+  transform-origin: 110px 22px;
+  transform: rotate(var(--arm-angle));
+  transition: transform 0.5s cubic-bezier(0.45, 0.05, 0.55, 0.95);
+}
+
+/* ── INFO SIDE ── */
+#info-side {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 280px;
+  position: relative; /* Base para el posicionamiento absoluto del idle */
+}
+
+/* Album art */
+#cover-wrap {
+  width: 240px; height: 240px;
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.8);
+  flex-shrink: 0;
+  background: #111;
+  position: relative;
+}
+#cover-img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+  opacity: 0;
+  transition: opacity 0.8s ease;
+}
+#cover-img.loaded { opacity: 1; }
+
+/* Track text */
+#track-artist {
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+#track-title {
+  font-family: 'DM Serif Display', serif;
+  font-size: 1.7rem;
+  line-height: 1.15;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+  margin-top: 2px;
+}
+#track-title .title-sub {
+  display: block;
+  font-size: 0.65em;
+  opacity: 0.75;
+  margin-top: 4px;
+}
+#track-album {
+  font-family: 'DM Serif Display', serif;
+  font-size: 0.82rem;
+  font-style: italic;
+  color: var(--text-secondary);
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.explicit-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: var(--text-secondary);
+  color: var(--bg);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.55rem;
+  font-weight: bold;
+  font-style: normal;
+  line-height: 1;
+}
+#track-album .album-sub {
+  font-size: 0.8em;
+  opacity: 0.7;
+}
+
+/* Meta badge */
+#meta-badge {
+  margin-top: 20px;
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px 3px 10px;
+  border-radius: 20px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.09);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.60rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+
+/* Format label (fuera del badge) */
+#meta-format-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-primary);
+}
+
+/* Progress */
+#progress-wrap { display: flex; flex-direction: column; gap: 5px; margin-top: 20px; }
+#progress-bg {
+  width: 100%; height: 2px;
+  background: rgba(255,255,255,0.2);
+  border-radius: 1px; overflow: hidden;
+}
+#progress-fill {
+  height: 100%;
+  background: var(--accent);
+  width: 0%;
+  border-radius: 1px;
+  transition: width 1s linear;
+}
+#progress-times {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.65rem;
+  color: var(--text-secondary);
+  letter-spacing: 0.05em;
+}
+
+/* State dot */
+#state-row { display: flex; align-items: center; gap: 8px; }
+#state-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition: background 0.4s ease, box-shadow 0.4s ease;
+  flex-shrink: 0;
+}
+#state-dot.playing {
+  background: #7ecb8a;
+  box-shadow: 0 0 6px #7ecb8a77;
+  animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.45} }
+#state-label { font-size: 0.68rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-secondary); }
+
+/* Mobile global state badge */
+#state-row-mobile {
+  position: fixed; top: 24px; left: 24px; z-index: 100;
+  display: none; /* Hidden on desktop */
+  align-items: center; gap: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 8px 16px; border-radius: 30px;
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  transition: opacity 0.8s ease;
+}
+#state-row-mobile.hidden { opacity: 0; pointer-events: none; }
+#state-dot-mobile {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--text-secondary); transition: background 0.4s ease, box-shadow 0.4s ease;
+}
+#state-dot-mobile.playing {
+  background: #7ecb8a; box-shadow: 0 0 6px #7ecb8a77; animation: pulse 2s ease-in-out infinite;
+}
+#state-label-mobile { font-size: 0.85rem; letter-spacing: 0.15em; text-transform: uppercase; color: var(--text-secondary); }
+
+/* Track info transition on song change */
+#track-info-wrap {
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+#track-info-wrap.changing {
+  opacity: 0;
+  transform: translateY(10px);
+  pointer-events: none;
+}
+
+/* ── HIDDEN STATES (for idle) ── */
+#arm-wrap {
+  transition: opacity 0.8s ease;
+  opacity: 1;
+}
+#arm-wrap.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+
+#state-row, #cover-wrap, #track-info-wrap {
+  transition: opacity 0.8s ease;
+  opacity: 1;
+}
+#info-side.hidden #state-row,
+#info-side.hidden #cover-wrap,
+#info-side.hidden #track-info-wrap {
+  opacity: 0;
+  pointer-events: none;
+}
+
+#idle-metadata {
+  position: absolute;
+  inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 14px;
+  opacity: 0;
+  transition: opacity 0.8s ease;
+  pointer-events: none;
+}
+#info-side.hidden #idle-metadata {
+  opacity: 1;
+}
+
+#idle-disc {
+  width: 60px; height: 60px; border-radius: 50%;
+  border: 1.5px solid rgba(255,255,255,0.07);
+  display: flex; align-items: center; justify-content: center;
+}
+#idle-disc svg { opacity: 0.25; }
+#idle-text { font-family: 'DM Serif Display', serif; font-size: 1rem; color: var(--text-secondary); text-align: center; }
+#idle-sub { font-size: 0.65rem; color: rgba(255,255,255,0.18); letter-spacing: 0.1em; text-transform: uppercase; text-align: center; }
+
+/* ── SWAP BUTTON ── */
+#swap-btn {
+  position: fixed;
+  bottom: 24px; right: 24px;
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  z-index: 50;
+  transition: all 0.2s ease;
+}
+#swap-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: var(--text-primary);
+  transform: scale(1.08);
+}
+#swap-btn svg { width: 20px; height: 20px; }
+
+/* ── RESPONSIVE OVERRIDES (Must be at end) ── */
+/* Toggle Vinilo/Carátula en pantallas pequeñas */
+@media (max-width: 900px) {
+  #turntable-side, #cover-wrap {
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  
+  /* Alineación izquierda tipo escritorio, ancho adaptado a la gráfica */
+  #info-side {
+    width: 420px;
+    gap: 32px; /* Más espacio vertical entre bloques */
+  }
+  #track-info-wrap {
+    width: 100%;
+  }
+
+  /* Textos más grandes para mejor legibilidad */
+  #track-title {
+    font-size: 2.4rem;
+    margin-top: 8px;
+    margin-bottom: 4px;
+  }
+  #track-artist {
+    font-size: 0.95rem;
+  }
+  #track-album {
+    font-size: 1.05rem;
+    margin-top: 6px;
+  }
+
+  /* Igualar el tamaño de la carátula al del vinilo para evitar saltos de diseño */
+  #cover-wrap {
+    order: -1;            
+    align-self: center;
+    width: 420px !important;
+    height: 420px !important;
+    /* Stage gap=40px, Info gap=32px -> margin=8px */
+    margin-bottom: 8px;  
+    border-radius: 8px;   
+  }
+
+  body:not(.show-cover) #cover-wrap { display: none; }
+  body.show-cover #turntable-side { display: none; }
+}
+
+@media (max-width: 560px) {
+  #info-side {
+    width: 420px;
+    gap: 24px;
+  }
+  #track-title {
+    font-size: 2.25rem; /* Reducido para evitar amontonamiento con títulos largos */
+    margin-top: 4px; /* Más cerca del artista */
+    line-height: 1.1;
+  }
+  #track-artist {
+    font-size: 1.25rem;
+  }
+  #track-album {
+    font-size: 1.3rem;
+    margin-top: 20px;
+  }
+  #cover-wrap {
+    margin-bottom: 24px;  
+  }
+
+  /* Ocultar botón de swap, ya que se toca la gráfica */
+  #swap-btn {
+    display: none;
+  }
+
+  /* Controles de progreso más grandes */
+  #progress-wrap {
+    margin-top: 28px;
+    gap: 12px;
+  }
+  #progress-times {
+    font-size: 1.1rem;
+  }
+  #progress-bg {
+    height: 6px;
+    border-radius: 3px;
+  }
+  #progress-fill {
+    border-radius: 3px;
+  }
+
+  /* Usamos el badge global en móvil en lugar del inline */
+  #state-row { display: none; }
+  #state-row-mobile { display: flex !important; }
+
+  /* Badge de calidad centrado */
+  #meta-badge {
+    display: flex;
+    width: max-content;
+    margin: 32px auto 0 auto;
+  }
+  .badge {
+    font-size: 0.9rem;
+    padding: 8px 16px 8px 16px;
+  }
+  .explicit-badge {
+    width: 18px;
+    height: 18px;
+    font-size: 0.75rem;
+  }
+
+  /* Transición suave al alternar entre carátula y vinilo */
+  @keyframes fadeSwap {
+    0% { opacity: 0; transform: scale(0.95); }
+    100% { opacity: 1; transform: scale(1); }
+  }
+  #turntable-side, #cover-wrap {
+    animation: fadeSwap 0.35s ease-out forwards;
+  }
+}
+</style>
 </head>
-<body>
-  <div id="vinyl"></div>
-  <div id="status">Warte auf Plexamp…</div>
+<body class="idle">
 
-  <script>
-    const vinyl = document.getElementById('vinyl');
-    const statusDiv = document.getElementById('status');
+<div id="ambient"></div>
 
-    async function updateStatus() {
-      try {
-        const res = await fetch('/status');
-        const data = await res.json();
+<div id="state-row-mobile" class="hidden">
+  <div id="state-dot-mobile"></div>
+  <span id="state-label-mobile">Detenido</span>
+</div>
 
-        if (data.cover) {
-          vinyl.style.backgroundImage = `url(${data.cover})`;
-        }
+<div id="stage">
+  <!-- Left: turntable -->
+  <div id="turntable-side">
+    <div id="platter">
+      <canvas id="vinyl-canvas"></canvas>
+    </div>
 
-        if (data.state === 'playing') {
-          vinyl.style.animationPlayState = 'running';
-          statusDiv.textContent = '▶ Spielt gerade';
-        } else {
-          vinyl.style.animationPlayState = 'paused';
-          statusDiv.textContent = '⏸ Pausiert';
-        }
-      } catch (e) {
-        console.error(e);
-        statusDiv.textContent = 'Fehler beim Abrufen';
+    <!-- Tonearm -->
+    <div id="arm-wrap" class="hidden">
+      <svg id="arm-svg" viewBox="0 0 200 260" xmlns="http://www.w3.org/2000/svg" overflow="visible">
+        <!-- Pivot base -->
+        <circle cx="110" cy="22" r="17" fill="#222018" stroke="#353028" stroke-width="1.5"/>
+        <circle cx="110" cy="22" r="10" fill="#1a1814" stroke="#453e30" stroke-width="1"/>
+        <circle cx="110" cy="22" r="4.5" fill="#7a6e58"/>
+        <!-- Counterweight -->
+        <rect x="96" y="4" width="28" height="9" rx="4.5" fill="#2a2620" stroke="#3a3528" stroke-width="0.8"/>
+        <!-- Arm tube -->
+        <line x1="110" y1="22" x2="52" y2="215" stroke="#302c26" stroke-width="7" stroke-linecap="round"/>
+        <line x1="110" y1="22" x2="52" y2="215" stroke="#58503e" stroke-width="1.8" stroke-linecap="round" stroke-dasharray="3 20"/>
+        <!-- Headshell joint -->
+        <line x1="52" y1="215" x2="25" y2="238" stroke="#302c26" stroke-width="5.5" stroke-linecap="round"/>
+        <!-- Headshell body -->
+        <rect x="8" y="233" width="34" height="10" rx="3" fill="#2a2620" stroke="#453e30" stroke-width="0.8"/>
+        <!-- Cartridge -->
+        <rect x="12" y="240" width="18" height="6" rx="2" fill="#1e1c18" stroke="#353028" stroke-width="0.6"/>
+        <!-- Stylus cantilever -->
+        <line x1="20" y1="246" x2="19" y2="255" stroke="#999" stroke-width="1" stroke-linecap="round"/>
+        <ellipse cx="19" cy="256" rx="1.8" ry="1.2" fill="#bbb"/>
+        <!-- Anti-skate -->
+        <path d="M110 22 Q142 55 140 105" stroke="#3a3528" stroke-width="0.7" fill="none" stroke-dasharray="3 6"/>
+      </svg>
+    </div>
+  </div>
+
+  <!-- Right: info -->
+  <div id="info-side" class="hidden">
+    <div id="idle-metadata">
+      <div id="idle-disc">
+        <svg width="28" height="28" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="16" cy="16" r="14" stroke="white" stroke-width="1.5"/>
+          <circle cx="16" cy="16" r="5"  stroke="white" stroke-width="1.5"/>
+          <circle cx="16" cy="16" r="2"  fill="white"/>
+        </svg>
+      </div>
+      <div id="idle-text">Esperando reproducción</div>
+      <div id="idle-sub">Plexamp · Vinyl Visualizer</div>
+    </div>
+
+    <div id="state-row">
+      <div id="state-dot"></div>
+      <span id="state-label">Detenido</span>
+    </div>
+    <div id="cover-wrap">
+      <img id="cover-img" src="" alt="Album art" crossorigin="anonymous">
+    </div>
+    <div id="track-info-wrap">
+      <div id="track-artist">—</div>
+      <div id="track-title">—</div>
+      <div id="track-album"></div>
+      <div id="progress-wrap">
+        <div id="progress-bg"><div id="progress-fill"></div></div>
+        <div id="progress-times">
+          <span id="time-cur">0:00</span>
+          <span id="time-tot">0:00</span>
+        </div>
+      </div>
+      <span class="badge" id="meta-badge"><span id="meta-info">—</span></span>
+    </div>
+  </div>
+</div>
+
+<button id="swap-btn" aria-label="Invertir diseño">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 3L4 7l4 4"/><path d="M4 7h16"/><path d="M16 21l4-4-4-4"/><path d="M20 17H4"/>
+  </svg>
+</button>
+
+<script>
+// ── CONFIG ──────────────────────────────────────────────
+const POLL_MS   = 4000; // Incrementado para reducir consultas innecesarias y saltos
+const SPIN_RPM  = 10;   // lento y suave (33.33 = velocidad real de vinilo)
+const SPIN_MS   = (60 / SPIN_RPM) * 1000; // ms per revolution
+
+// Arm angles (degrees, measured from pivot, CSS rotate)
+// At 0% progress → outer groove → arm more vertical (less rotated)
+// At 100% progress → inner groove → arm more rotated inward
+const ARM_REST  = -28;   // parked (fuera del disco)
+const ARM_START = -23.7; // geometrically at outer groove edge
+const ARM_END   = -0.9;  // geometrically at inner groove edge (label border)
+
+const PLATTER_R   = 210; // px, half of 420
+const LABEL_R     = 90;  // px radius (~43% diameter, más cercano a vinilo real)
+const GROOVE_IN   = LABEL_R + 8;  // 98px — innermost groove
+const GROOVE_OUT  = PLATTER_R - 14; // 196px — outermost groove
+
+// ── STATE ────────────────────────────────────────────────
+let lastCover     = '';
+let isPlaying     = false;
+let spinAngle     = 0;     // degrees, current rotation
+let lastRAFTime   = null;
+let rafID         = null;
+let trackOffset   = 0;     // ms
+let trackDuration = 0;     // ms
+let tickTimer     = null;
+let accentR=200, accentG=169, accentB=110;
+let labelR=30,   labelG=20,   labelB=50;
+
+// DOM refs
+const canvas    = document.getElementById('vinyl-canvas');
+const ctx       = canvas.getContext('2d');
+const armSvg    = document.getElementById('arm-svg');
+const coverImg  = document.getElementById('cover-img');
+const infoSide  = document.getElementById('info-side');
+const ambient   = document.getElementById('ambient');
+const stateDot  = document.getElementById('state-dot');
+const stateLabel= document.getElementById('state-label');
+const progFill  = document.getElementById('progress-fill');
+
+// ── CANVAS SETUP ─────────────────────────────────────────
+let DPR = 1;
+function setupCanvas() {
+  const CSS_SIZE = 420;
+  DPR = window.devicePixelRatio || 1;
+  canvas.width  = CSS_SIZE * DPR;
+  canvas.height = CSS_SIZE * DPR;
+  canvas.style.width  = CSS_SIZE + 'px';
+  canvas.style.height = CSS_SIZE + 'px';
+  // Pre-scale context so all draw calls use logical px
+  ctx.scale(DPR, DPR);
+}
+
+// ── DRAW VINYL ───────────────────────────────────────────
+// Draws the full vinyl disc at a given rotation angle (radians)
+// and with label colors (r,g,b)
+let labelImg = null; // cached offscreen label canvas
+let coverBitmap = null; // blurred cover for vinyl background
+
+// Draw text along a circular arc, centered at angle startAngle (radians)
+// radius: arc radius, text: string, above: true=text outside arc (top), false=below (bottom)
+function drawArcText(lx, text, cx, cy, radius, startAngle, above, style) {
+  if (!text) return;
+  const chars = text.split('');
+  // Measure total angular span
+  lx.save();
+  lx.font = style.font;
+  const charWidths = chars.map(c => lx.measureText(c).width);
+  const totalWidth = charWidths.reduce((a,b)=>a+b,0) + (chars.length-1)*(style.spacing||0);
+  const totalAngle = totalWidth / radius;
+
+  // Start angle so text is centered on startAngle
+  let angle = startAngle - totalAngle / 2;
+  if (!above) angle = startAngle + totalAngle / 2; // flip for bottom arc
+
+  lx.fillStyle = style.color;
+  chars.forEach((ch, i) => {
+    const charAngle = above ? angle : angle;
+    lx.save();
+    lx.translate(cx + radius * Math.cos(charAngle), cy + radius * Math.sin(charAngle));
+    // Rotate each char to be tangent to the circle
+    if (above) {
+      lx.rotate(charAngle + Math.PI/2);
+    } else {
+      lx.rotate(charAngle - Math.PI/2);
+    }
+    lx.textAlign = 'center';
+    lx.textBaseline = 'middle';
+    lx.fillText(ch, 0, 0);
+    lx.restore();
+    const step = (charWidths[i] + (charWidths[i+1]||0))/2/radius + (style.spacing||0)/radius;
+    if (above) angle += step; else angle -= step;
+  });
+  lx.restore();
+}
+
+function buildLabelCanvas(r, g, b, artist, album, year) {
+  // Render at 3x resolution for crisp text, then scale down when drawing
+  const SCALE = 3;
+  const lc = document.createElement('canvas');
+  const d  = LABEL_R * 2 * SCALE;
+  lc.width = lc.height = d;
+  lc._scale = SCALE; // store scale so drawVinyl knows the real size
+  const lx = lc.getContext('2d');
+  const cx = LABEL_R * SCALE, cy = LABEL_R * SCALE;
+  const R  = LABEL_R * SCALE;
+
+  // Background: dark + color tint radial gradient
+  const bg = lx.createRadialGradient(cx, cy, 0, cx, cy, R);
+  bg.addColorStop(0,   `rgba(${Math.round(r*0.65)},${Math.round(g*0.55)},${Math.round(b*0.75)},1)`);
+  bg.addColorStop(0.45,`rgba(${Math.round(r*0.32)},${Math.round(g*0.27)},${Math.round(b*0.38)},1)`);
+  bg.addColorStop(1,   `rgba(${Math.round(r*0.12)},${Math.round(g*0.10)},${Math.round(b*0.15)},1)`);
+
+  lx.save();
+  lx.beginPath();
+  lx.arc(cx, cy, R, 0, Math.PI*2);
+  lx.clip();
+  lx.fillStyle = bg;
+  lx.fillRect(0, 0, d, d);
+
+  // Color glow bloom
+  const glow = lx.createRadialGradient(cx*0.55, cy*0.45, 0, cx*0.55, cy*0.45, R*0.75);
+  glow.addColorStop(0, `rgba(${r},${g},${b},0.20)`);
+  glow.addColorStop(1, `rgba(${r},${g},${b},0)`);
+  lx.fillStyle = glow;
+  lx.fillRect(0, 0, d, d);
+
+  // Decorative concentric rings
+  [0.50, 0.65, 0.82, 0.93].forEach(t => {
+    lx.beginPath();
+    lx.arc(cx, cy, R * t, 0, Math.PI*2);
+    lx.strokeStyle = `rgba(255,255,255,0.05)`;
+    lx.lineWidth = 0.7 * SCALE;
+    lx.stroke();
+  });
+
+  // Outer ring border
+  lx.beginPath();
+  lx.arc(cx, cy, R - SCALE, 0, Math.PI*2);
+  lx.strokeStyle = `rgba(255,255,255,0.12)`;
+  lx.lineWidth = 1.2 * SCALE;
+  lx.stroke();
+
+  // ── ARTIST — curved along top arc ──
+  const artistText = (artist || '').toUpperCase();
+  drawArcText(lx, artistText, cx, cy, R * 0.77, -Math.PI/2, true, {
+    font: `bold ${18 * SCALE}px 'Bebas Neue', sans-serif`,
+    color: 'rgba(255,255,255,0.95)',
+    spacing: 1.8 * SCALE,
+  });
+
+  // ── YEAR — curved along top arc immediately below artist ──
+  if (year) {
+    drawArcText(lx, String(year), cx, cy, R * 0.57, -Math.PI/2, true, {
+      font: `${11 * SCALE}px 'DM Mono', monospace`,
+      color: 'rgba(255,255,255,0.45)',
+      spacing: 2.5 * SCALE,
+    });
+  }
+
+  // ── ALBUM — curved along bottom arc (dynamic font to avoid truncation) ──
+  const albumFull = album || '';
+  if (albumFull) {
+    let mainAlbum = albumFull;
+    let subAlbum = null;
+    
+    // Extraer paréntesis al final (ej: "Paranoid (2012 Remaster)")
+    const match = albumFull.match(/^(.*?)\s*(\(.*?\))\s*$/);
+    if (match) {
+      mainAlbum = match[1];
+      subAlbum = match[2];
+    }
+
+    const maxAlbumAngle = Math.PI * 0.85;
+
+    // Función auxiliar para medir y pintar un arco de álbum
+    const drawAlbumText = (text, radius, baseSize, color) => {
+      let fontSize = baseSize * SCALE;
+      lx.font = `italic ${fontSize}px 'DM Serif Display', serif`;
+      const awChars = text.split('');
+      const awTotal = awChars.reduce((acc, c) => acc + lx.measureText(c).width, 0)
+                    + awChars.length * 0.5 * SCALE;
+      const neededAngle = awTotal / radius;
+      if (neededAngle > maxAlbumAngle) {
+        fontSize = Math.max(Math.floor(fontSize * maxAlbumAngle / neededAngle), 6 * SCALE);
+      }
+      drawArcText(lx, text, cx, cy, radius, Math.PI/2, false, {
+        font: `italic ${fontSize}px 'DM Serif Display', serif`,
+        color: color,
+        spacing: 0.5 * SCALE,
+      });
+    };
+
+    if (subAlbum) {
+      // Dibujar álbum principal más cerca del centro
+      drawAlbumText(mainAlbum, R * 0.65, 13, 'rgba(255,255,255,0.75)');
+      // Dibujar el subtítulo entre paréntesis debajo
+      drawAlbumText(subAlbum, R * 0.80, 9.5, 'rgba(255,255,255,0.45)');
+    } else {
+      // Una sola línea como estaba antes
+      drawAlbumText(mainAlbum, R * 0.72, 13, 'rgba(255,255,255,0.65)');
+    }
+  }
+
+  lx.restore();
+
+  // Spindle hole — perfectly centered
+  lx.save();
+  lx.beginPath();
+  lx.arc(cx, cy, 5 * SCALE, 0, Math.PI*2);
+  lx.fillStyle = '#000';
+  lx.fill();
+  // Centered subtle glow (radial gradient instead of offset dot)
+  const spindleGlow = lx.createRadialGradient(cx, cy, 0, cx, cy, 5 * SCALE);
+  spindleGlow.addColorStop(0,   'rgba(255,255,255,0.22)');
+  spindleGlow.addColorStop(0.4, 'rgba(255,255,255,0.06)');
+  spindleGlow.addColorStop(1,   'rgba(255,255,255,0)');
+  lx.beginPath();
+  lx.arc(cx, cy, 5 * SCALE, 0, Math.PI*2);
+  lx.fillStyle = spindleGlow;
+  lx.fill();
+  lx.restore();
+
+  return lc;
+}
+
+function drawVinyl(angleRad) {
+  const cx = PLATTER_R, cy = PLATTER_R;
+  const size = PLATTER_R * 2;
+  // Clear using logical dimensions (context is already scaled by DPR)
+  ctx.clearRect(0, 0, size, size);
+
+  ctx.save();
+  // Clip everything to circle
+  ctx.beginPath();
+  ctx.arc(cx, cy, PLATTER_R, 0, Math.PI*2);
+  ctx.clip();
+
+  // ── VINYL BACKGROUND: Blurred cover + Colored vinyl overlay ──
+  // Base negra siempre (por si alpha < 1)
+  ctx.fillStyle = '#09090c';
+  ctx.fillRect(0, 0, size, size);
+
+  if (coverBitmap && vinylAlpha > 0) {
+    ctx.save();
+    ctx.globalAlpha = vinylAlpha;
+    
+    // 1. Carátula rotando debajo
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angleRad);
+    const blurPx = Math.round(8 * DPR);
+    ctx.filter = `blur(${blurPx}px) saturate(1.2) brightness(0.35)`;
+    ctx.drawImage(coverBitmap, -cx, -cy, size, size);
+    ctx.filter = 'none';
+    ctx.restore();
+
+    // 2. Gradiente radial del color de énfasis
+    const vinylGrad = ctx.createRadialGradient(cx, cy, LABEL_R, cx, cy, PLATTER_R);
+    vinylGrad.addColorStop(0,   `rgba(${accentR}, ${accentG}, ${accentB}, 0.30)`);
+    vinylGrad.addColorStop(0.6, `rgba(${accentR}, ${accentG}, ${accentB}, 0.60)`);
+    vinylGrad.addColorStop(1,   `rgba(${accentR}, ${accentG}, ${accentB}, 0.20)`);
+    ctx.fillStyle = vinylGrad;
+    ctx.fillRect(0, 0, size, size);
+    
+    // 3. Velo oscuro final
+    ctx.fillStyle = 'rgba(4,4,6,0.15)';
+    ctx.fillRect(0, 0, size, size);
+    
+    ctx.restore();
+  }
+
+  // ── GROOVES (centered, full disc minus label area) ──
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(angleRad);
+
+  // Draw groove rings
+  const grooveCount = 80;
+  for (let i = 0; i < grooveCount; i++) {
+    const t   = i / grooveCount;
+    const rad = GROOVE_IN + t * (GROOVE_OUT - GROOVE_IN);
+    const alpha = 0.025 + 0.01 * Math.sin(t * Math.PI);
+    ctx.beginPath();
+    ctx.arc(0, 0, rad, 0, Math.PI*2);
+    ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+    ctx.lineWidth = 0.7;
+    ctx.stroke();
+  }
+
+  // Wider "band" separating label from grooves
+  ctx.beginPath();
+  ctx.arc(0, 0, LABEL_R + 4, 0, Math.PI*2);
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.restore();
+
+  // ── LABEL (centered, rotates with disc) ──
+  if (labelImg) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angleRad);
+    // labelImg is rendered at SCALE×, draw it back at logical size
+    const scale = labelImg._scale || 1;
+    const drawR = LABEL_R;
+    ctx.drawImage(labelImg, -drawR, -drawR, drawR * 2, drawR * 2);
+    ctx.restore();
+  }
+
+  // ── OUTER EDGE highlight ──
+  ctx.beginPath();
+  ctx.arc(cx, cy, PLATTER_R - 1, 0, Math.PI*2);
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+// ── ARM ANGLE FROM PROGRESS ──────────────────────────────
+function setArmAngle(angle) {
+  armSvg.style.transform = `rotate(${angle}deg)`;
+}
+
+function progressToArmAngle(pct) {
+  // pct: 0..1  → ARM_START..ARM_END
+  return ARM_START + pct * (ARM_END - ARM_START);
+}
+
+// ── SPIN LOOP ────────────────────────────────────────────
+let vinylAlpha = 0; // Controla la transición de la imagen sobre el vinilo negro
+
+function spinLoop(ts) {
+  if (!isPlaying && vinylAlpha <= 0) { lastRAFTime = null; rafID = null; return; }
+  
+  if (lastRAFTime !== null) {
+    const delta = ts - lastRAFTime;
+    spinAngle += (delta / SPIN_MS) * 360;
+    spinAngle %= 360;
+
+    // Smooth fade for vinyl colors
+    const fadeSpeed = delta / 800;
+    if (isPlaying) {
+      vinylAlpha = Math.min(1, vinylAlpha + fadeSpeed);
+    } else {
+      vinylAlpha = Math.max(0, vinylAlpha - fadeSpeed);
+    }
+  }
+  lastRAFTime = ts;
+  drawVinyl(spinAngle * Math.PI / 180);
+  rafID = requestAnimationFrame(spinLoop);
+}
+
+function startSpin() {
+  if (!rafID) {
+    lastRAFTime = null;
+    rafID = requestAnimationFrame(spinLoop);
+  }
+}
+
+function stopSpin() {
+  if (!rafID && vinylAlpha > 0) {
+    lastRAFTime = null;
+    rafID = requestAnimationFrame(spinLoop);
+  }
+}
+
+// ── PROGRESS TICK ─────────────────────────────────────────
+function startTick() {
+  clearInterval(tickTimer);
+  if (!isPlaying) return;
+  tickTimer = setInterval(() => {
+    trackOffset = Math.min(trackOffset + 1000, trackDuration);
+    updateProgress();
+  }, 1000);
+}
+
+function updateProgress() {
+  if (trackDuration <= 0) return;
+  const pct = Math.min(trackOffset / trackDuration, 1);
+  progFill.style.width = (pct * 100).toFixed(2) + '%';
+  document.getElementById('time-cur').textContent = fmtMs(trackOffset);
+  document.getElementById('time-tot').textContent = fmtMs(trackDuration);
+  // Move arm in real time — arm position reflects playback progress
+  const armAngle = progressToArmAngle(pct);
+  setArmAngle(isPlaying || trackOffset > 0 ? armAngle : ARM_REST);
+}
+
+function fmtMs(ms) {
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
+}
+
+// ── COLOR EXTRACTION ──────────────────────────────────────
+// Finds the most vibrant (highest HSL saturation) color in the image.
+// Falls back to luminosity-weighted average if no saturated color found.
+function extractColors(img) {
+  try {
+    const SIZE = 64;
+    const c = document.createElement('canvas');
+    c.width = c.height = SIZE;
+    const x = c.getContext('2d');
+    x.drawImage(img, 0, 0, SIZE, SIZE);
+    const d = x.getImageData(0, 0, SIZE, SIZE).data;
+
+    let bestSat = 0, vibR = 0, vibG = 0, vibB = 0;
+    let ar = 0, ag = 0, ab = 0, an = 0;
+
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i], g = d[i+1], b = d[i+2];
+      const lum = 0.2126*r + 0.7152*g + 0.0722*b;
+      if (lum < 12 || lum > 240) continue; // skip near-black / near-white
+
+      // Accumulate average
+      ar += r; ag += g; ab += b; an++;
+
+      // HSL saturation
+      const rf = r/255, gf = g/255, bf = b/255;
+      const max = Math.max(rf, gf, bf), min = Math.min(rf, gf, bf);
+      const l = (max + min) / 2;
+      const s = max === min ? 0
+        : l > 0.5 ? (max - min) / (2 - max - min)
+                  : (max - min) / (max + min);
+
+      // Prefer saturated colors with mid-range lightness (avoids washed-out/dark)
+      if (s > bestSat && l > 0.18 && l < 0.78) {
+        bestSat = s;
+        vibR = r; vibG = g; vibB = b;
       }
     }
 
-    setInterval(updateStatus, 2000);
-    updateStatus();
-  </script>
+    if (!an) return;
+    const avgR = Math.round(ar/an), avgG = Math.round(ag/an), avgB = Math.round(ab/an);
+
+    // Use vibrant color if saturation is meaningful, otherwise fall back to average
+    const useR = bestSat > 0.18 ? vibR : avgR;
+    const useG = bestSat > 0.18 ? vibG : avgG;
+    const useB = bestSat > 0.18 ? vibB : avgB;
+
+    // Accent: boosted vibrant color (usado para el tinte del vinilo)
+    accentR = Math.min(255, Math.round(useR * 1.35));
+    accentG = Math.min(255, Math.round(useG * 1.15));
+    accentB = Math.min(255, Math.round(useB * 1.0));
+
+    // UI Accent: versión aclarada para legibilidad de textos y UI
+    let uiAccentR = accentR;
+    let uiAccentG = accentG;
+    let uiAccentB = accentB;
+    const aLum = 0.2126 * accentR + 0.7152 * accentG + 0.0722 * accentB;
+    if (aLum < 110) {
+      const mix = (110 - aLum) / 110;
+      uiAccentR = Math.round(accentR + (255 - accentR) * (mix * 0.9));
+      uiAccentG = Math.round(accentG + (255 - accentG) * (mix * 0.9));
+      uiAccentB = Math.round(accentB + (255 - accentB) * (mix * 0.9));
+    }
+
+    // Set CSS variable only for the UI
+    document.documentElement.style.setProperty('--accent', `rgb(${uiAccentR},${uiAccentG},${uiAccentB})`);
+
+    // Label: rich but dark version of the vibrant color
+    labelR = Math.round(useR * 0.68);
+    labelG = Math.round(useG * 0.58);
+    labelB = Math.round(useB * 0.82);
+
+    // Ambient glow (radial on left side)
+    const bg = `rgba(${Math.round(avgR*0.2)},${Math.round(avgG*0.18)},${Math.round(avgB*0.22)},0.6)`;
+    ambient.style.background =
+      `radial-gradient(ellipse 65% 55% at 25% 50%, ${bg} 0%, transparent 70%)`;
+
+    // Full page background — dark but clearly tinted with album color
+    const bgR = Math.round(avgR * 0.30), bgG = Math.round(avgG * 0.26), bgB = Math.round(avgB * 0.38);
+    const bgR2 = Math.round(bgR * 0.5),  bgG2 = Math.round(bgG * 0.5),  bgB2 = Math.round(bgB * 0.5);
+    document.documentElement.style.setProperty('--bg', `rgb(${bgR},${bgG},${bgB})`);
+    document.body.style.background =
+      `linear-gradient(135deg, rgb(${bgR},${bgG},${bgB}) 0%, rgb(${bgR2},${bgG2},${bgB2}) 100%)`;
+    document.body.style.transition = 'background 2s ease';
+  } catch(e) {}
+}
+
+// ── UI UPDATE ─────────────────────────────────────────────
+let currentTitle  = '';
+let currentArtist = '';
+let currentAlbum  = '';
+let currentYear   = '';
+
+function rebuildLabel() {
+  labelImg = buildLabelCanvas(labelR, labelG, labelB, currentArtist, currentAlbum, currentYear);
+}
+
+function setPlaying(playing) {
+  isPlaying = playing;
+  stateDot.classList.toggle('playing', playing);
+  document.getElementById('state-dot-mobile').classList.toggle('playing', playing);
+  const labelTxt = playing ? 'Reproduciendo' : 'En pausa';
+  stateLabel.textContent = labelTxt;
+  document.getElementById('state-label-mobile').textContent = labelTxt;
+  if (playing) startSpin(); else stopSpin();
+  startTick();
+}
+
+function showIdle() {
+  document.body.classList.add('idle');
+  document.body.classList.remove('show-cover'); // Forza la vista de vinilo en móvil
+  document.getElementById('info-side').classList.add('hidden');
+  document.getElementById('arm-wrap').classList.add('hidden');
+  document.getElementById('state-row-mobile').classList.add('hidden');
+  
+  setPlaying(false);
+  clearInterval(tickTimer);
+  setArmAngle(ARM_REST);
+  ambient.style.background = '';
+  document.documentElement.style.setProperty('--accent','#c8a96e');
+  document.documentElement.style.setProperty('--bg','#0d0d0f');
+  document.body.style.background = '#0d0d0f';
+  trackOffset = 0; trackDuration = 0;
+  // NO ponemos coverBitmap = null para permitir que canvas.globalAlpha lo desvanezca suavemente
+}
+
+function updateUI(data) {
+  if (!data || data.state === 'stopped') { showIdle(); return; }
+
+  document.body.classList.remove('idle');
+  document.getElementById('info-side').classList.remove('hidden');
+  document.getElementById('arm-wrap').classList.remove('hidden');
+  document.getElementById('state-row-mobile').classList.remove('hidden');
+
+  // Cover art
+  if (data.cover && data.cover !== lastCover) {
+    lastCover = data.cover;
+    coverImg.classList.remove('loaded');
+    const tmp = new Image();
+    tmp.crossOrigin = 'anonymous';
+    tmp.onload = () => {
+      coverImg.src = data.cover;
+      coverImg.classList.add('loaded');
+      extractColors(tmp);
+      // Store cover bitmap for vinyl background
+      coverBitmap = tmp;
+      // Rebuild label with new colors (keep existing text)
+      rebuildLabel();
+    };
+    tmp.onerror = () => { coverImg.src = data.cover; coverImg.classList.add('loaded'); };
+    tmp.src = data.cover;
+  }
+
+  // Detectar cambio de canción
+  const newTitle  = data.title  || '';
+  const newArtist = data.artist || '';
+  const trackChanged = newTitle !== currentTitle || newArtist !== currentArtist;
+
+  if (trackChanged) {
+    // Pop progress bar immediately to 0
+    const progFill = document.getElementById('progress-fill');
+    progFill.style.transition = 'none';
+    progFill.style.width = '0%';
+    void progFill.offsetWidth; // force reflow
+    progFill.style.transition = 'width 1s linear';
+  }
+
+  const infoWrap = document.getElementById('track-info-wrap');
+
+  function applyTrackInfo() {
+    currentTitle  = data.title  || '';
+    currentArtist = data.artist || '';
+    currentYear   = data.year   || '';
+
+    let rawAlbum = data.album || '';
+    let isExplicit = false;
+    // Detectar etiqueta explícita (sola o anidada en paréntesis/corchetes)
+    if (/[\(\[]Explicit[\)\]]/i.test(rawAlbum)) {
+      isExplicit = true;
+      rawAlbum = rawAlbum.replace(/\s*[\(\[]Explicit[\)\]]/ig, '');
+    } else if (/\s*(?:- )?Explicit\s*(?=[\)\]])/i.test(rawAlbum)) {
+      // Captura casos como "(The Moonlight Edition - Explicit)"
+      isExplicit = true;
+      rawAlbum = rawAlbum.replace(/\s*(?:- )?Explicit\s*(?=[\)\]])/ig, '');
+    }
+    currentAlbum = rawAlbum;
+
+    document.getElementById('track-artist').textContent = currentArtist || '—';
+    
+    const trackTitleEl = document.getElementById('track-title');
+    const titleMatch = currentTitle.match(/^(.*?)\s*(\(.*?\))\s*$/);
+    if (titleMatch) {
+      trackTitleEl.innerHTML = `${titleMatch[1]} <span class="title-sub">${titleMatch[2]}</span>`;
+    } else {
+      trackTitleEl.textContent = currentTitle || '—';
+    }
+    
+    const trackAlbumEl = document.getElementById('track-album');
+    const albumMatch = currentAlbum.match(/^(.*?)\s*(\(.*?\))\s*$/);
+    
+    let albumHtml = '';
+    if (isExplicit) {
+      // Inyectar el badge al inicio del nombre del álbum
+      albumHtml += `<span class="explicit-badge" title="Explicit">E</span> `;
+    }
+
+    if (albumMatch) {
+      albumHtml += `${albumMatch[1]} <span class="album-sub">${albumMatch[2]}</span>`;
+    } else {
+      albumHtml += currentAlbum || '';
+    }
+    
+    trackAlbumEl.innerHTML = albumHtml;
+
+    // Badge de calidad
+    let metaStr = data.codec ? data.codec.toUpperCase() : '';
+    if (data.bitDepth && data.sampleRate) {
+      metaStr += (metaStr ? ' · ' : '') + data.bitDepth + 'bit · ' + (data.sampleRate / 1000).toFixed(1) + 'kHz';
+    } else if (data.bitrate) {
+      metaStr += (metaStr ? ' · ' : '') + data.bitrate + 'kbps';
+    }
+    document.getElementById('meta-info').textContent = metaStr || '—';
+
+    rebuildLabel();
+  }
+
+  if (trackChanged) {
+    // Fade out → actualizar → fade in
+    infoWrap.classList.add('changing');
+    setTimeout(() => {
+      applyTrackInfo();
+      // Forzar reflow para que la transición de vuelta se active
+      void infoWrap.offsetHeight;
+      infoWrap.classList.remove('changing');
+    }, 370);
+  } else {
+    // Sin cambio de cancón: actualizar directo
+    applyTrackInfo();
+  }
+
+  trackDuration = data.duration   || 0;
+  
+  // Sincronización suave: evitamos saltos/stuttering si el servidor 
+  // reporta un tiempo que difiere por menos de 3 segundos del tiempo local.
+  const newOffset = data.viewOffset || 0;
+  if (trackChanged || Math.abs(trackOffset - newOffset) > 3000) {
+    trackOffset = newOffset;
+  }
+  
+  updateProgress();
+
+  const playing = data.state === 'playing';
+  if (playing !== isPlaying) setPlaying(playing);
+}
+
+// ── POLL ──────────────────────────────────────────────────
+const urlParams = new URLSearchParams(window.location.search);
+const viewerToken = urlParams.get('token') || '';
+
+async function poll() {
+  try {
+    const res  = await fetch('/status', {
+      headers: {
+        'x-viewer-token': viewerToken
+      }
+    });
+    if (res.status === 401) {
+      document.getElementById('state-label').textContent = "Unauthorized";
+      document.getElementById('state-label-mobile').textContent = "Unauthorized";
+      return showIdle();
+    }
+    const data = await res.json();
+    updateUI(data);
+  } catch(e) { showIdle(); }
+}
+
+// ── INIT ──────────────────────────────────────────────────
+setupCanvas();
+labelImg = buildLabelCanvas(30, 20, 50, '', '', '');
+drawVinyl(0);
+poll();
+setInterval(poll, POLL_MS);
+
+// Arm progress update every second (independent of poll)
+setInterval(() => {
+  if (!isPlaying || trackDuration <= 0) return;
+  const pct = Math.min(trackOffset / trackDuration, 1);
+  setArmAngle(progressToArmAngle(pct));
+}, 500);
+
+// Swap button toggle
+document.getElementById('swap-btn').addEventListener('click', () => {
+  document.getElementById('stage').classList.toggle('reversed');
+});
+
+// Mobile Cover/Vinyl toggle
+document.getElementById('turntable-side').addEventListener('click', () => {
+  if (window.innerWidth <= 900 && !document.body.classList.contains('idle')) {
+    document.body.classList.add('show-cover');
+  }
+});
+document.getElementById('cover-wrap').addEventListener('click', () => {
+  if (window.innerWidth <= 900 && !document.body.classList.contains('idle')) {
+    document.body.classList.remove('show-cover');
+  }
+});
+</script>
 </body>
 </html>
